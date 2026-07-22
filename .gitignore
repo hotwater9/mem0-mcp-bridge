@@ -1,0 +1,10 @@
+.env
+*.local
+__pycache__/
+*.pyc
+.venv/
+.omc/
+.mcp.json
+*.tar.gz
+bridge_state/
+data/

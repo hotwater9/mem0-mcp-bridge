@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mem0 Memory Browser</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif; }
+    .memory-card { transition: background 0.12s; }
+    .memory-card:hover { background: #f9fafb; }
+    code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 0.85em; }
+    .badge { display: inline-block; padding: 1px 6px; border-radius: 9999px; font-size: 0.7rem; font-weight: 500; }
+    .b-project { background: #dbeafe; color: #1e40af; }
+    .b-user { background: #d1fae5; color: #065f46; }
+    .b-score { background: #fef3c7; color: #92400e; }
+    .b-hit { background: #ffedd5; color: #9a3412; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <div class="container mx-auto max-w-5xl p-4">
+
+    <!-- Header -->
+    <header class="mb-4 flex items-center justify-between">
+      <h1 class="text-2xl font-bold flex items-center gap-2">
+        <span>🧠</span>
+        <span>mem0 Memory Browser</span>
+      </h1>
+      <div class="flex items-center gap-3 text-sm">
+        <span id="status" class="px-2 py-1 rounded bg-gray-200">Disconnected</span>
+        <button onclick="showStats()" class="text-blue-600 hover:underline">📊 Stats</button>
+        <button onclick="showHot()" class="text-orange-600 hover:underline">🔥 热门</button>
+        <button onclick="showProjects()" class="text-purple-600 hover:underline">📁 项目</button>
+        <button onclick="changeToken()" class="text-blue-600 hover:underline">Token</button>
+      </div>
+    </header>
+
+    <!-- Filter bar -->
+    <div class="bg-white rounded-lg p-4 mb-4 shadow-sm border border-gray-200">
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-2">
+        <input id="filter-project" placeholder="Project (e.g. my-app)"
+               list="project-suggestions"
+               class="md:col-span-3 border rounded px-3 py-2 text-sm" />
+        <datalist id="project-suggestions"></datalist>
+        <input id="filter-user" placeholder="User (e.g. john)"
+               class="md:col-span-3 border rounded px-3 py-2 text-sm" />
+        <input id="filter-search" placeholder="Semantic search query (optional)"
+               class="md:col-span-4 border rounded px-3 py-2 text-sm" />
+        <button onclick="reset()"
+                class="md:col-span-1 bg-gray-200 hover:bg-gray-300 rounded px-3 py-2 text-sm">Reset</button>
+        <button onclick="run()"
+                class="md:col-span-1 bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-2 text-sm">Go</button>
+      </div>
+      <p class="text-xs text-gray-500 mt-2">
+        留空 = 不过滤。语义搜索（query 不为空时）需要同时填 project + user。
+      </p>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="space-y-2"></div>
+
+    <!-- Pagination -->
+    <div id="pagination" class="mt-4 flex justify-between items-center text-sm text-gray-600 hidden">
+      <span id="page-info"></span>
+      <div class="flex gap-2">
+        <button onclick="prevPage()" id="prev-btn"
+                class="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed">← Prev</button>
+        <button onclick="nextPage()" id="next-btn"
+                class="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed">Next →</button>
+      </div>
+    </div>
+
+    <footer class="mt-12 text-center text-xs text-gray-400">
+      mem0 bridge · token 保存在浏览器 localStorage · 只对内网开放
+    </footer>
+  </div>
+
+  <!-- Stats modal -->
+  <!-- flex-col + max-h cap on the card lets the header sit in the non-scrolling
+       flex slot while the content area takes overflow-y-auto. Widened to 5xl
+       so the 30-day activity bar chart fits without horizontal overflow. -->
+  <div id="stats-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg max-w-5xl w-full max-h-[85vh] shadow-xl flex flex-col">
+      <div class="flex justify-between items-center px-6 py-4 border-b border-gray-200 flex-shrink-0">
+        <h2 class="text-xl font-bold">📊 记忆使用情况</h2>
+        <div class="flex gap-3 items-center text-sm">
+          <select id="stats-project-filter" onchange="showStats()" class="border border-gray-300 rounded px-2 py-1 text-sm">
+            <option value="">全部项目</option>
+          </select>
+          <button onclick="showStats()" class="text-blue-600 hover:underline">Refresh</button>
+          <button onclick="hideStats()" class="text-gray-500 hover:text-gray-900 text-2xl leading-none">&times;</button>
+        </div>
+      </div>
+      <div id="stats-content" class="px-6 py-4 overflow-y-auto flex-1 text-sm text-gray-600">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Hot memories modal -->
+  <div id="hot-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg p-6 max-w-3xl w-full max-h-[85vh] overflow-y-auto shadow-xl">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-bold">🔥 热门记忆 Top 20</h2>
+        <div class="flex gap-3 text-sm">
+          <button onclick="showHot()" class="text-orange-600 hover:underline">Refresh</button>
+          <button onclick="hideHot()" class="text-gray-500 hover:text-gray-900 text-2xl leading-none">&times;</button>
+        </div>
+      </div>
+      <div id="hot-content" class="text-sm text-gray-600">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Projects modal -->
+  <div id="proj-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg p-6 max-w-3xl w-full max-h-[85vh] overflow-y-auto shadow-xl">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-bold">📁 项目管理</h2>
+        <div class="flex gap-3 text-sm">
+          <button onclick="showProjects()" class="text-purple-600 hover:underline">Refresh</button>
+          <button onclick="hideProjects()" class="text-gray-500 hover:text-gray-900 text-2xl leading-none">&times;</button>
+        </div>
+      </div>
+      <p class="text-xs text-gray-500 mb-3">
+        只有这里登记且<b>活跃</b>的项目，MCP 客户端才能连接（<code>/mcp/&lt;project&gt;/sse/&lt;user&gt;</code>）。
+        软删后项目仍会显示（标记"已删除"），可点 ♻️ 恢复 重新启用。
+        要清空记忆，点 🗑️ 清记忆 按钮（不可逆）。
+      </p>
+
+      <!-- Add form -->
+      <div class="bg-gray-50 rounded p-3 mb-4">
+        <div class="text-sm font-semibold text-gray-700 mb-2">➕ 新增项目</div>
+        <div class="grid grid-cols-12 gap-2">
+          <input id="proj-new-name" placeholder="Name (alphanumeric/-/_/. 2-64 chars, e.g. my-app)"
+                 class="col-span-5 border rounded px-3 py-2 text-sm" />
+          <input id="proj-new-desc" placeholder="描述（可选）"
+                 class="col-span-5 border rounded px-3 py-2 text-sm" />
+          <button onclick="createProject()"
+                  class="col-span-2 bg-purple-600 hover:bg-purple-700 text-white rounded px-3 py-2 text-sm">添加</button>
+        </div>
+        <div id="proj-new-msg" class="text-xs mt-2"></div>
+      </div>
+
+      <!-- Search bar -->
+      <div class="mb-3">
+        <input id="proj-search" placeholder="🔍 搜索项目（名称 / 描述，输入即过滤）"
+               oninput="renderProjectsFiltered()"
+               class="w-full border rounded px-3 py-2 text-sm" />
+      </div>
+
+      <div id="proj-content" class="text-sm text-gray-600">Loading…</div>
+    </div>
+  </div>
+
+  <script>
+    const PAGE_SIZE = 20;
+    const state = { offset: 0, mode: "browse" };
+
+    // ---------- token ----------
+    function getToken() {
+      let t = localStorage.getItem("mem0_token");
+      if (!t) {
+        t = window.prompt("输入 MEM0_TOKEN（服务端 SHARED_TOKEN）：");
+        if (t) localStorage.setItem("mem0_token", t.trim());
+      }
+      return t;
+    }
+    function changeToken() {
+      localStorage.removeItem("mem0_token");
+      const t = window.prompt("输入新的 MEM0_TOKEN：");
+      if (t) localStorage.setItem("mem0_token", t.trim());
+      run();
+    }
+
+    // ---------- api helper ----------
+    async function api(path, opts = {}) {
+      const token = getToken();
+      if (!token) return null;
+      const headers = { "Authorization": "Bearer " + token, ...(opts.headers || {}) };
+      if (opts.body) headers["Content-Type"] = "application/json";
+      let res;
+      try {
+        res = await fetch(path, { ...opts, headers });
+      } catch (e) {
+        setStatus("err", "Network error");
+        return null;
+      }
+      if (res.status === 401) { setStatus("err", "Unauthorized"); return null; }
+      if (!res.ok) {
+        let msg = "Error " + res.status;
+        try { const j = await res.json(); if (j.error) msg += ": " + j.error; } catch {}
+        setStatus("err", msg);
+        return null;
+      }
+      setStatus("ok", "Connected");
+      return res.json();
+    }
+
+    function setStatus(kind, text) {
+      const el = document.getElementById("status");
+      el.textContent = text;
+      el.className = "px-2 py-1 rounded " + (
+        kind === "ok"  ? "bg-green-200 text-green-900" :
+        kind === "err" ? "bg-red-200 text-red-900"     :
+                         "bg-gray-200"
+      );
+    }
+
+    // ---------- render ----------
+    function escapeHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function fmtTs(ts) {
+      if (!ts) return "";
+      const d = new Date(ts);
+      return isNaN(d) ? String(ts) : d.toLocaleString("zh-CN");
+    }
+    function render(items, opts = {}) {
+      const root = document.getElementById("results");
+      if (!items || items.length === 0) {
+        root.innerHTML = `<div class="text-center text-gray-400 py-12">${opts.empty || "No memories."}</div>`;
+        return;
+      }
+      root.innerHTML = items.map(m => {
+        const id = m.id || m.memory_id || "";
+        const text = m.memory || m.text || m.data || JSON.stringify(m);
+        return `
+          <div class="memory-card bg-white rounded-lg p-4 shadow-sm border border-gray-200">
+            <div class="text-gray-900 mb-2 whitespace-pre-wrap leading-relaxed">${escapeHtml(text)}</div>
+            <div class="text-xs text-gray-500 flex flex-wrap gap-2 items-center">
+              ${m.agent_id ? `<span class="badge b-project">${escapeHtml(m.agent_id)}</span>` : ""}
+              ${m.user_id  ? `<span class="badge b-user">${escapeHtml(m.user_id)}</span>` : ""}
+              ${m.score !== undefined ? `<span class="badge b-score">score ${Number(m.score).toFixed(3)}</span>` : ""}
+              ${(m.hit_count ?? 0) > 0 ? `<span class="badge b-hit" title="被检索过的次数（search 命中 + get 直取）">🔥 ${m.hit_count}</span>` : ""}
+              ${m.created_at ? `<span>${escapeHtml(fmtTs(m.created_at))}</span>` : ""}
+              ${id ? `<span>· <code>${escapeHtml(id)}</code></span>` : ""}
+              <span class="ml-auto">
+                <button onclick="del('${escapeHtml(id)}')" class="text-red-600 hover:underline">delete</button>
+              </span>
+            </div>
+          </div>`;
+      }).join("");
+    }
+
+    // ---------- run ----------
+    function readFilters() {
+      return {
+        project: document.getElementById("filter-project").value.trim(),
+        user:    document.getElementById("filter-user").value.trim(),
+        query:   document.getElementById("filter-search").value.trim(),
+      };
+    }
+    function reset() {
+      document.getElementById("filter-project").value = "";
+      document.getElementById("filter-user").value = "";
+      document.getElementById("filter-search").value = "";
+      state.offset = 0;
+      run();
+    }
+
+    async function run() {
+      const f = readFilters();
+      const root = document.getElementById("results");
+      root.innerHTML = '<div class="text-center text-gray-400 py-12">Loading…</div>';
+
+      if (f.query) {
+        if (!f.project || !f.user) {
+          root.innerHTML = "";
+          alert("语义搜索需要同时填 Project 和 User。");
+          return;
+        }
+        const data = await api("/search", {
+          method: "POST",
+          body: JSON.stringify({ project: f.project, user: f.user, query: f.query, limit: 30 }),
+        });
+        if (!data) { root.innerHTML = ""; return; }
+        state.mode = "search";
+        render(data.memories || [], { empty: "No matching memories." });
+        document.getElementById("pagination").classList.add("hidden");
+        return;
+      }
+
+      const params = new URLSearchParams({ limit: PAGE_SIZE, offset: state.offset });
+      if (f.project) params.set("project", f.project);
+      if (f.user)    params.set("user", f.user);
+      const data = await api("/memories?" + params);
+      if (!data) { root.innerHTML = ""; return; }
+
+      state.mode = "browse";
+      render(data.memories || []);
+      const pag = document.getElementById("pagination");
+      pag.classList.remove("hidden");
+      const start = data.count ? state.offset + 1 : 0;
+      const end = state.offset + (data.count || 0);
+      document.getElementById("page-info").textContent =
+        data.count ? `Showing ${start}–${end}` : "No results";
+      document.getElementById("prev-btn").disabled = state.offset === 0;
+      document.getElementById("next-btn").disabled = (data.count || 0) < PAGE_SIZE;
+    }
+
+    function nextPage() { state.offset += PAGE_SIZE; run(); }
+    function prevPage() { state.offset = Math.max(0, state.offset - PAGE_SIZE); run(); }
+
+    async function del(id) {
+      if (!id) return;
+      if (!confirm("Delete memory " + id + " ?")) return;
+      const r = await api("/memories/" + encodeURIComponent(id), { method: "DELETE" });
+      if (r) run();
+    }
+
+    // Submit on Enter inside any filter
+    ["filter-project", "filter-user", "filter-search"].forEach(id => {
+      document.getElementById(id).addEventListener("keydown", e => {
+        if (e.key === "Enter") { state.offset = 0; run(); }
+      });
+    });
+
+    // ---------- stats ----------
+    function fmtBytes(n) {
+      if (n == null) return "—";
+      if (n < 1024) return n + " B";
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+      if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+      return (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
+    }
+
+    function bar(count, max, color) {
+      const pct = max > 0 ? Math.max(2, (count / max) * 100) : 0;
+      return `<div class="bg-gray-100 rounded h-2 overflow-hidden"><div class="${color} h-full" style="width:${pct}%"></div></div>`;
+    }
+
+    function rowsTable(obj, color) {
+      const entries = Object.entries(obj);
+      if (entries.length === 0) return '<div class="text-gray-400">无数据</div>';
+      const max = Math.max(...entries.map(([, c]) => c));
+      return `
+        <div class="space-y-1">
+          ${entries.map(([k, c]) => `
+            <div class="grid grid-cols-12 gap-2 items-center text-sm">
+              <div class="col-span-5 truncate" title="${escapeHtml(k)}">${escapeHtml(k)}</div>
+              <div class="col-span-5">${bar(c, max, color)}</div>
+              <div class="col-span-2 text-right font-mono">${c}</div>
+            </div>`).join("")}
+        </div>`;
+    }
+
+    async function showStats() {
+      const modal = document.getElementById("stats-modal");
+      const content = document.getElementById("stats-content");
+      const filterEl = document.getElementById("stats-project-filter");
+      const selectedProject = filterEl.value;
+      modal.classList.remove("hidden");
+      content.innerHTML = '<div class="text-gray-400 py-8 text-center">Loading…</div>';
+
+      const params = selectedProject ? `?project=${encodeURIComponent(selectedProject)}` : "";
+      const data = await api("/stats" + params);
+      if (!data) {
+        content.innerHTML = '<div class="text-red-600">加载失败</div>';
+        return;
+      }
+
+      // Populate project dropdown (use by_project keys from unfiltered or keep existing options)
+      if (!selectedProject && data.by_project) {
+        const projects = Object.keys(data.by_project).filter(p => p !== "<none>");
+        const prev = filterEl.value;
+        filterEl.innerHTML = '<option value="">全部项目</option>' +
+          projects.map(p => `<option value="${escapeHtml(p)}"${p === prev ? ' selected' : ''}>${escapeHtml(p)}</option>`).join("");
+      }
+
+      const q = data.qdrant || {};
+      const truncatedNote = data.scan_truncated
+        ? `<p class="text-xs text-amber-600 mt-1">⚠️ 记忆数 > ${data.scanned}，下方分项是抽样统计</p>`
+        : "";
+
+      const pairTable = (data.by_pair || []).map(p => `
+        <tr class="border-t">
+          <td class="py-1 truncate"><span class="badge b-project">${escapeHtml(p.project)}</span></td>
+          <td class="py-1 truncate"><span class="badge b-user">${escapeHtml(p.user)}</span></td>
+          <td class="py-1 text-right font-mono">${p.count}</td>
+        </tr>`).join("");
+
+      // ---- Activity (last 30 days) ----
+      const activityEntries = Object.entries(data.activity_30d || {});
+      const actMax = Math.max(1, ...activityEntries.map(([, v]) => v));
+      const activityHtml = activityEntries.length === 0
+        ? '<div class="text-gray-400 text-xs">无活动数据</div>'
+        : `<div class="flex items-end gap-1 h-24">${
+            activityEntries.map(([day, n]) => {
+              const h = Math.max(2, Math.round((n / actMax) * 96));
+              const md = day.slice(5);
+              return `<div class="flex-1 flex flex-col items-center justify-end" title="${day}: ${n}">
+                <div class="w-full bg-blue-400 rounded-t" style="height:${h}px"></div>
+                <div class="text-[9px] text-gray-400 mt-1 truncate">${md}</div>
+              </div>`;
+            }).join("")
+          }</div>`;
+
+      // ---- Length stats ----
+      const lst = data.length_stats || {};
+      const lengthHtml = lst.count
+        ? `<div class="grid grid-cols-4 gap-2 text-center text-xs">
+            <div class="bg-gray-50 rounded p-2"><div class="text-lg font-mono">${lst.avg}</div><div class="text-gray-500">avg</div></div>
+            <div class="bg-gray-50 rounded p-2"><div class="text-lg font-mono">${lst.p50}</div><div class="text-gray-500">p50</div></div>
+            <div class="bg-gray-50 rounded p-2"><div class="text-lg font-mono">${lst.p90}</div><div class="text-gray-500">p90</div></div>
+            <div class="bg-gray-50 rounded p-2"><div class="text-lg font-mono">${lst.max}</div><div class="text-gray-500">max</div></div>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">字符长度（${lst.count} 条样本）</p>`
+        : '<div class="text-gray-400 text-xs">无样本</div>';
+
+      // ---- Recent 10 ----
+      const recentHtml = (data.recent || []).length === 0
+        ? '<div class="text-gray-400 text-xs">无数据</div>'
+        : (data.recent || []).map(m => `
+            <div class="border-l-2 border-blue-300 pl-2 py-1">
+              <div class="text-sm text-gray-800 truncate">${escapeHtml(m.memory || "").slice(0, 120)}${(m.memory||"").length>120?"…":""}</div>
+              <div class="text-[10px] text-gray-500 flex flex-wrap gap-1 mt-0.5">
+                ${m.agent_id ? `<span class="badge b-project">${escapeHtml(m.agent_id)}</span>` : ""}
+                ${m.user_id ? `<span class="badge b-user">${escapeHtml(m.user_id)}</span>` : ""}
+                ${m.created_at ? `<span>${escapeHtml(fmtTs(m.created_at))}</span>` : ""}
+              </div>
+            </div>`).join("");
+
+      // ---- Categories (only if present) ----
+      const catEntries = Object.entries(data.by_category || {});
+      const categoriesHtml = catEntries.length === 0
+        ? `<div class="text-gray-400 text-xs italic">未启用 mem0 自动分类（mem0 配置里加 \`enable_categorization\`）</div>`
+        : rowsTable(data.by_category, "bg-purple-500");
+
+      // ---- Update ratio ----
+      const ur = data.update_ratio || {};
+      const urRatio = Math.round((ur.ratio || 0) * 100);
+      const updateRatioHtml = (ur.total || 0) === 0
+        ? '<div class="text-gray-400 text-xs">无数据</div>'
+        : `<div class="flex items-center gap-3">
+            <div class="flex-1 bg-gray-100 rounded h-3 overflow-hidden">
+              <div class="bg-orange-400 h-full" style="width:${urRatio}%"></div>
+            </div>
+            <span class="text-sm font-mono">${urRatio}%</span>
+            <span class="text-xs text-gray-500">${ur.updated} / ${ur.total} 条曾被 UPDATE</span>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">高占比表示记忆在被持续修订（mem0 自动去重在生效）</p>`;
+
+      // ---- Embedding & Search quality ----
+      const emb = data.embedding || {};
+      const sq = data.search_quality || {};
+      const top1 = sq.avg_top1_score;
+      const top1Pct = top1 != null ? Math.round(top1 * 100) : null;
+      const qualityColor =
+        top1 == null ? "bg-gray-300" :
+        top1 >= 0.7 ? "bg-emerald-500" :
+        top1 >= 0.5 ? "bg-amber-500"   :
+                      "bg-red-500";
+      const qualityLabel =
+        top1 == null ? "无样本" :
+        top1 >= 0.7 ? "良好" :
+        top1 >= 0.5 ? "一般" :
+                      "偏差";
+      const zrr = Math.round((sq.zero_result_ratio || 0) * 100);
+      const fmtNum = n => (n || 0).toLocaleString();
+      const embeddingHtml = (emb.calls || 0) === 0 && (sq.calls || 0) === 0
+        ? '<div class="text-gray-400 text-xs">还没有 embedding / search 调用记录</div>'
+        : `<div class="grid grid-cols-2 gap-3 text-sm">
+            <div class="bg-gray-50 rounded p-3">
+              <div class="text-xs text-gray-500 mb-1">写入 vs 检索</div>
+              <div class="font-mono text-sm">写入 ${fmtNum(emb.write_calls)} · 检索 ${fmtNum(emb.read_calls)}</div>
+              <div class="font-mono text-xs text-gray-600">embedding tokens: ${fmtNum(emb.tokens)} · ~$${(emb.estimated_cost_usd || 0).toFixed(5)}</div>
+            </div>
+            <div class="${top1 != null ? 'bg-emerald-50' : 'bg-gray-50'} rounded p-3">
+              <div class="text-xs text-gray-500 mb-1">检索质量 (avg top-1 score)</div>
+              <div class="font-mono text-2xl">${top1 != null ? top1.toFixed(3) : "—"}</div>
+              <div class="flex items-center gap-2 mt-1">
+                <div class="flex-1 bg-gray-200 rounded h-2 overflow-hidden">
+                  <div class="${qualityColor} h-full" style="width:${top1Pct ?? 0}%"></div>
+                </div>
+                <span class="text-xs text-gray-600">${qualityLabel}</span>
+              </div>
+            </div>
+            <div class="col-span-2 bg-gray-50 rounded p-3 text-xs text-gray-600 flex justify-between">
+              <span>0-result 比例: <span class="font-mono">${zrr}%</span> (${fmtNum(sq.zero_result_count)} / ${fmtNum(sq.calls)})</span>
+              <span class="text-gray-400">高 0-result 比例 = 团队问的题目大多没在记忆库里</span>
+            </div>
+          </div>
+          <p class="text-xs text-gray-400 mt-2">
+            top-1 score &gt; 0.7 良好 · 0.5–0.7 一般 · &lt; 0.5 偏差
+          </p>`;
+
+      // ---- LLM usage ----
+      const llm = data.llm || {};
+      const uptimeMin = Math.floor((llm.uptime_sec || 0) / 60);
+      const fmt = n => (n || 0).toLocaleString();
+      const hitPct = Math.round((llm.cache_hit_ratio || 0) * 100);
+      const llmHtml = (llm.calls || 0) === 0
+        ? '<div class="text-gray-400 text-xs">还没有 LLM 调用记录</div>'
+        : `<div class="grid grid-cols-2 gap-3 text-sm">
+            <div class="bg-gray-50 rounded p-3">
+              <div class="text-xs text-gray-500 mb-1">调用 / 输入 token / 输出 token</div>
+              <div class="font-mono text-sm">${fmt(llm.calls)} calls</div>
+              <div class="font-mono text-xs text-gray-600">in: ${fmt(llm.input_tokens)} · out: ${fmt(llm.output_tokens)}</div>
+            </div>
+            <div class="bg-emerald-50 rounded p-3">
+              <div class="text-xs text-emerald-700 mb-1">Prompt cache 命中率</div>
+              <div class="font-mono text-2xl text-emerald-900">${hitPct}%</div>
+              <div class="text-xs text-emerald-700">cache_read: ${fmt(llm.cache_read_tokens)} · creation: ${fmt(llm.cache_creation_tokens)}</div>
+            </div>
+            <div class="col-span-2 bg-amber-50 rounded p-3 flex justify-between items-center">
+              <div>
+                <div class="text-xs text-amber-700">估算节省成本（vs 不开 cache）</div>
+                <div class="text-xs text-amber-600">按 sonnet $3/1M input · cache_read $0.30/1M · cache_write $3.75/1M 估算</div>
+              </div>
+              <div class="font-mono text-2xl text-amber-900">$${(llm.estimated_savings_usd || 0).toFixed(4)}</div>
+            </div>
+          </div>
+          <p class="text-xs text-gray-400 mt-2">
+            自第一条记录起累计 ${uptimeMin} 分钟（持久化到 /state/metrics.db，重启不丢） · 完整账单看 litellm dashboard
+          </p>`;
+
+      content.innerHTML = `
+        <!-- Top KPI cards -->
+        <div class="grid grid-cols-4 gap-3 mb-6">
+          <div class="bg-blue-50 rounded p-3">
+            <div class="text-2xl font-bold text-blue-900">${data.total_memories ?? 0}</div>
+            <div class="text-xs text-blue-700">条记忆</div>
+          </div>
+          <div class="bg-green-50 rounded p-3">
+            <div class="text-2xl font-bold text-green-900">${Object.keys(data.by_project || {}).length}</div>
+            <div class="text-xs text-green-700">个项目</div>
+          </div>
+          <div class="bg-amber-50 rounded p-3">
+            <div class="text-2xl font-bold text-amber-900">${Object.keys(data.by_user || {}).length}</div>
+            <div class="text-xs text-amber-700">个用户</div>
+          </div>
+          <div class="bg-emerald-50 rounded p-3">
+            <div class="text-2xl font-bold text-emerald-900">${llm.calls ?? 0}</div>
+            <div class="text-xs text-emerald-700">LLM 调用</div>
+          </div>
+        </div>
+
+        <!-- Activity timeline -->
+        <div class="mb-6">
+          <h3 class="font-semibold text-gray-700 mb-2">📈 最近 30 天活跃度</h3>
+          ${activityHtml}
+        </div>
+
+        <!-- Length distribution -->
+        <div class="mb-6">
+          <h3 class="font-semibold text-gray-700 mb-2">✏️ 记忆长度分布</h3>
+          ${lengthHtml}
+        </div>
+
+        <!-- Embedding & search quality -->
+        <div class="mb-6">
+          <h3 class="font-semibold text-gray-700 mb-2">🔍 Embedding 用量 & 检索质量</h3>
+          ${embeddingHtml}
+        </div>
+
+        <!-- LLM usage / cache -->
+        <div class="mb-6">
+          <h3 class="font-semibold text-gray-700 mb-2">💰 LLM 用量（累计）</h3>
+          ${llmHtml}
+        </div>
+
+        <!-- Update ratio -->
+        <div class="mb-6">
+          <h3 class="font-semibold text-gray-700 mb-2">🔁 修订率</h3>
+          ${updateRatioHtml}
+        </div>
+
+        <!-- Recent 10 -->
+        <div class="mb-6">
+          <h3 class="font-semibold text-gray-700 mb-2">🕒 最近 10 条记忆</h3>
+          <div class="space-y-1">${recentHtml}</div>
+        </div>
+
+        <!-- Categories -->
+        <div class="mb-6">
+          <h3 class="font-semibold text-gray-700 mb-2">🏷️ 按分类</h3>
+          ${categoriesHtml}
+        </div>
+
+        <!-- Qdrant info -->
+        <div class="mb-6">
+          <h3 class="font-semibold text-gray-700 mb-2">Qdrant 向量库</h3>
+          <div class="text-xs text-gray-600 grid grid-cols-2 gap-x-4 gap-y-1 bg-gray-50 rounded p-3">
+            <div><span class="text-gray-500">points:</span> <span class="font-mono">${q.points_count ?? "—"}</span></div>
+            <div><span class="text-gray-500">vectors:</span> <span class="font-mono">${q.vectors_count ?? "—"}</span></div>
+            <div><span class="text-gray-500">indexed:</span> <span class="font-mono">${q.indexed_vectors_count ?? "—"}</span></div>
+            <div><span class="text-gray-500">segments:</span> <span class="font-mono">${q.segments_count ?? "—"}</span></div>
+            <div><span class="text-gray-500">status:</span> <span class="font-mono">${escapeHtml(q.status ?? "—")}</span></div>
+            <div><span class="text-gray-500">embed dim:</span> <span class="font-mono">${data.embedding_dim ?? "—"}</span></div>
+          </div>
+          ${truncatedNote}
+        </div>
+
+        <!-- By project -->
+        <div class="mb-6">
+          <h3 class="font-semibold text-gray-700 mb-2">按项目分布</h3>
+          ${rowsTable(data.by_project || {}, "bg-blue-500")}
+        </div>
+
+        <!-- By user -->
+        <div class="mb-6">
+          <h3 class="font-semibold text-gray-700 mb-2">按用户分布</h3>
+          ${rowsTable(data.by_user || {}, "bg-green-500")}
+        </div>
+
+        <!-- By pair -->
+        <div>
+          <h3 class="font-semibold text-gray-700 mb-2">Top 项目 × 用户 (前 50)</h3>
+          ${(data.by_pair || []).length === 0 ? '<div class="text-gray-400">无数据</div>' : `
+            <table class="w-full text-sm">
+              <thead class="text-left text-xs text-gray-500">
+                <tr><th class="py-1">Project</th><th class="py-1">User</th><th class="py-1 text-right">Count</th></tr>
+              </thead>
+              <tbody>${pairTable}</tbody>
+            </table>`}
+        </div>
+      `;
+    }
+
+    function hideStats() {
+      document.getElementById("stats-modal").classList.add("hidden");
+    }
+
+    // ---------- hot memories ----------
+    function fmtRelTs(unixSec) {
+      if (!unixSec) return "—";
+      const diff = Date.now() / 1000 - unixSec;
+      if (diff < 60)        return Math.floor(diff) + "s 前";
+      if (diff < 3600)      return Math.floor(diff / 60) + " 分钟前";
+      if (diff < 86400)     return Math.floor(diff / 3600) + " 小时前";
+      if (diff < 30 * 86400) return Math.floor(diff / 86400) + " 天前";
+      const d = new Date(unixSec * 1000);
+      return d.toLocaleDateString("zh-CN");
+    }
+
+    async function showHot() {
+      const modal = document.getElementById("hot-modal");
+      const content = document.getElementById("hot-content");
+      modal.classList.remove("hidden");
+      content.innerHTML = '<div class="text-gray-400 py-8 text-center">Loading…</div>';
+
+      const data = await api("/popular?limit=20");
+      if (!data) {
+        content.innerHTML = '<div class="text-red-600">加载失败</div>';
+        return;
+      }
+      const items = data.popular || [];
+      if (items.length === 0) {
+        content.innerHTML = `
+          <div class="text-gray-500 py-8 text-center">
+            <div class="text-3xl mb-2">🌱</div>
+            <div>暂无检索记录。先调用几次 search_memory / get_memory，再回来看。</div>
+          </div>`;
+        return;
+      }
+
+      const maxHits = Math.max(...items.map(it => it.hit_count));
+      const rows = items.map((it, idx) => {
+        const rank = idx + 1;
+        const rankColor = rank === 1 ? "text-amber-600" : rank <= 3 ? "text-amber-500" : "text-gray-400";
+        const widthPct = Math.max(4, Math.round((it.hit_count / maxHits) * 100));
+        const snippet = it.orphan
+          ? `<span class="italic text-gray-400">&lt;已删除&gt;</span>`
+          : escapeHtml((it.memory || "").slice(0, 100)) + ((it.memory || "").length > 100 ? "…" : "");
+        const breakdown = `search ${it.search_hits || 0} · get ${it.get_hits || 0}`;
+        return `
+          <div class="border-b border-gray-100 py-2 grid grid-cols-12 gap-2 items-start">
+            <div class="col-span-1 ${rankColor} font-bold font-mono text-lg">${rank}</div>
+            <div class="col-span-8">
+              <div class="text-sm text-gray-800 leading-relaxed">${snippet}</div>
+              <div class="text-[10px] text-gray-500 flex flex-wrap gap-1 mt-1">
+                ${it.project ? `<span class="badge b-project">${escapeHtml(it.project)}</span>` : ""}
+                ${it.user ? `<span class="badge b-user">${escapeHtml(it.user)}</span>` : ""}
+                <code class="text-gray-400">${escapeHtml(it.memory_id)}</code>
+              </div>
+            </div>
+            <div class="col-span-3 text-right">
+              <div class="font-mono text-lg text-orange-700">🔥 ${it.hit_count}</div>
+              <div class="text-[10px] text-gray-500">${breakdown}</div>
+              <div class="text-[10px] text-gray-400">${fmtRelTs(it.last_hit_ts)}</div>
+              <div class="bg-gray-100 rounded h-1.5 mt-1 overflow-hidden">
+                <div class="bg-orange-400 h-full" style="width:${widthPct}%"></div>
+              </div>
+            </div>
+          </div>`;
+      }).join("");
+
+      content.innerHTML = `
+        <p class="text-xs text-gray-400 mb-3">
+          按"被检索次数"降序排序：每次 <code>search_memory</code> 命中前 5 条 + 每次 <code>get_memory</code> 直取，都计 1。
+          含已删除（孤儿）记忆，方便回溯历史热度。
+        </p>
+        <div class="space-y-0">${rows}</div>`;
+    }
+
+    function hideHot() {
+      document.getElementById("hot-modal").classList.add("hidden");
+    }
+
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape") hideStats();
+    });
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape") hideHot();
+    });
+
+    // ---------- projects ----------
+    async function refreshProjectSuggestions() {
+      // Populate the datalist behind the Project filter input. Only active
+      // (non-soft-deleted) projects show up in the autocomplete — deleted
+      // ones can't be MCP-connected anyway. Silent on failure (e.g. no
+      // token yet on first paint).
+      const data = await api("/projects").catch(() => null);
+      const dl = document.getElementById("project-suggestions");
+      if (!dl || !data || !data.projects) return;
+      dl.innerHTML = data.projects
+        .filter(p => !p.deleted_at)
+        .map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.description || "")}</option>`)
+        .join("");
+    }
+
+    // Last fetched project list, kept around so the search box can filter
+    // without re-hitting the server. Re-fetch happens after every mutate
+    // (create / restore / soft-delete / hard-delete / clear memories).
+    let _projData = null;
+
+    async function showProjects() {
+      const modal = document.getElementById("proj-modal");
+      const content = document.getElementById("proj-content");
+      modal.classList.remove("hidden");
+      content.innerHTML = '<div class="text-gray-400 py-8 text-center">Loading…</div>';
+
+      const data = await api("/projects");
+      if (!data) {
+        content.innerHTML = '<div class="text-red-600">加载失败</div>';
+        _projData = null;
+        return;
+      }
+      _projData = data;
+      renderProjectsFiltered();
+      refreshProjectSuggestions();
+    }
+
+    function renderProjectsFiltered() {
+      const content = document.getElementById("proj-content");
+      if (!_projData) return;
+      const all = _projData.projects || [];
+      if (all.length === 0) {
+        content.innerHTML = `
+          <div class="text-gray-500 py-8 text-center">
+            <div class="text-3xl mb-2">📦</div>
+            <div>还没有项目。用上面的表单新增一个。</div>
+          </div>`;
+        return;
+      }
+      const q = (document.getElementById("proj-search").value || "").trim().toLowerCase();
+      const filtered = q
+        ? all.filter(p =>
+            p.name.toLowerCase().includes(q) ||
+            (p.description || "").toLowerCase().includes(q))
+        : all;
+
+      const fmtTsLocal = ts => {
+        if (!ts) return "—";
+        const d = new Date(ts * 1000);
+        return isNaN(d) ? String(ts) : d.toLocaleString("zh-CN");
+      };
+      const activeCount = all.filter(p => !p.deleted_at).length;
+      const deletedCount = all.length - activeCount;
+
+      const rows = filtered.map(p => {
+        const isDeleted = !!p.deleted_at;
+        const memCnt = p.memory_count;
+        const memBadge = memCnt == null
+          ? `<span class="text-gray-400">—</span>`
+          : memCnt === 0
+            ? `<span class="text-gray-500">0</span>`
+            : `<span class="text-blue-700 font-mono">${memCnt}</span>`;
+        const retrCnt = p.retrieval_count || 0;
+        const retrBadge = retrCnt === 0
+          ? `<span class="text-gray-400">0</span>`
+          : `<span class="text-orange-700 font-mono" title="search/get 累计调用次数">🔍 ${retrCnt}</span>`;
+        const nameCell = isDeleted
+          ? `<span class="badge bg-gray-200 text-gray-500 line-through">${escapeHtml(p.name)}</span>
+             <span class="badge bg-red-100 text-red-700 ml-1" title="${escapeHtml(fmtTsLocal(p.deleted_at))} 软删">已删除</span>`
+          : `<span class="badge b-project">${escapeHtml(p.name)}</span>`;
+        const actions = isDeleted
+          ? `<button onclick="restoreProject('${escapeHtml(p.name)}')"
+                     class="text-green-600 hover:underline text-xs"
+                     title="恢复该项目，MCP 客户端可重新连接">♻️ 恢复</button>
+             <button onclick="clearProjectMemories('${escapeHtml(p.name)}', ${memCnt == null ? "null" : memCnt})"
+                     class="text-orange-600 hover:underline text-xs"
+                     title="删除该项目下所有记忆（不可恢复）">🗑️ 清记忆</button>
+             <button onclick="hardDeleteProject('${escapeHtml(p.name)}', ${memCnt == null ? "null" : memCnt})"
+                     class="text-red-700 hover:underline text-xs font-semibold"
+                     title="物理删除项目 + 清空全部记忆，不可恢复">💣 彻底删除</button>`
+          : `<button onclick="clearProjectMemories('${escapeHtml(p.name)}', ${memCnt == null ? "null" : memCnt})"
+                     class="text-orange-600 hover:underline text-xs"
+                     title="删除该项目下所有记忆（不可恢复）">🗑️ 清记忆</button>
+             <button onclick="deleteProject('${escapeHtml(p.name)}')"
+                     class="text-red-600 hover:underline text-xs"
+                     title="把项目从白名单移除（记忆保留，可恢复）">软删</button>`;
+        const rowClass = isDeleted
+          ? "border-t bg-gray-50/50 text-gray-500"
+          : "border-t hover:bg-gray-50";
+        return `
+          <tr class="${rowClass}">
+            <td class="py-2 pr-2 align-top">${nameCell}</td>
+            <td class="py-2 pr-2 align-top ${isDeleted ? "text-gray-400" : "text-gray-700"}">${escapeHtml(p.description || "")}</td>
+            <td class="py-2 pr-2 text-right align-top">${memBadge}</td>
+            <td class="py-2 pr-2 text-right align-top">${retrBadge}</td>
+            <td class="py-2 pr-2 text-xs text-gray-500 align-top">${escapeHtml(fmtTsLocal(p.created_at))}</td>
+            <td class="py-2 pr-2 text-right space-x-2 whitespace-nowrap align-top">${actions}</td>
+          </tr>`;
+      }).join("");
+
+      let summary;
+      if (q) {
+        summary = `<div class="text-xs text-gray-500 mb-2">搜索 "<b>${escapeHtml(q)}</b>" 命中 ${filtered.length} / ${all.length} 条 · 全库活跃 ${activeCount} · 已删除 ${deletedCount}</div>`;
+      } else if (deletedCount === 0) {
+        summary = `<div class="text-xs text-gray-500 mb-2">共 ${activeCount} 个活跃项目</div>`;
+      } else {
+        summary = `<div class="text-xs text-gray-500 mb-2">活跃 ${activeCount} · 已删除 ${deletedCount}（♻️ 恢复 重新启用 / 💣 彻底删除 物理清除）</div>`;
+      }
+
+      const tableBody = filtered.length === 0
+        ? `<tr><td colspan="6" class="py-6 text-center text-gray-400">无匹配项目</td></tr>`
+        : rows;
+
+      content.innerHTML = `
+        ${summary}
+        <table class="w-full text-sm">
+          <thead class="text-left text-xs text-gray-500">
+            <tr>
+              <th class="py-1 pr-2">名称</th>
+              <th class="py-1 pr-2">描述</th>
+              <th class="py-1 pr-2 text-right">记忆数</th>
+              <th class="py-1 pr-2 text-right">检索次数</th>
+              <th class="py-1 pr-2">创建时间</th>
+              <th class="py-1 pr-2"></th>
+            </tr>
+          </thead>
+          <tbody>${tableBody}</tbody>
+        </table>`;
+    }
+
+    function hideProjects() {
+      document.getElementById("proj-modal").classList.add("hidden");
+      document.getElementById("proj-new-msg").textContent = "";
+      document.getElementById("proj-search").value = "";
+    }
+
+    async function createProject() {
+      const nameEl = document.getElementById("proj-new-name");
+      const descEl = document.getElementById("proj-new-desc");
+      const msg = document.getElementById("proj-new-msg");
+      const name = nameEl.value.trim();
+      const description = descEl.value.trim();
+      if (!name) {
+        msg.textContent = "名称不能为空";
+        msg.className = "text-xs mt-2 text-red-600";
+        return;
+      }
+      msg.textContent = "提交中…";
+      msg.className = "text-xs mt-2 text-gray-500";
+      const r = await api("/projects", {
+        method: "POST",
+        body: JSON.stringify({ name, description }),
+      });
+      if (r) {
+        // Server returns status: 'created' (201) or 'restored' (200) when
+        // the same name was previously soft-deleted.
+        msg.textContent = r.status === "restored"
+          ? `♻️ 已恢复软删项目 "${name}"`
+          : `✅ 已创建 "${name}"`;
+        msg.className = "text-xs mt-2 text-green-600";
+        nameEl.value = "";
+        descEl.value = "";
+        showProjects();
+      }
+      // on failure setStatus already wrote the error to the top status bar
+    }
+
+    async function deleteProject(name) {
+      if (!confirm(
+        `软删项目 "${name}" ？\n\n` +
+        `效果：从白名单标记为已删除，MCP 客户端将无法再连接。\n` +
+        `行为：项目仍会在列表里显示（已删除状态），随时可以恢复。\n` +
+        `数据：qdrant 里的记忆不会被删除。`
+      )) return;
+      const r = await api("/projects/" + encodeURIComponent(name), { method: "DELETE" });
+      if (r) showProjects();
+    }
+
+    async function restoreProject(name) {
+      const r = await api(
+        "/projects/" + encodeURIComponent(name) + "/restore",
+        { method: "POST" }
+      );
+      if (r) showProjects();
+    }
+
+    async function hardDeleteProject(name, cnt) {
+      const cntText = cnt == null ? "未知数量" : cnt + " 条";
+      // First confirm: spell out the consequences
+      if (!confirm(
+        `💣 彻底删除 "${name}" ？\n\n` +
+        `不可恢复操作：\n` +
+        `  1. 删除 qdrant 中所有 agent_id="${name}" 的记忆（${cntText}）\n` +
+        `  2. 物理删除 projects 表里的记录\n\n` +
+        `执行后无法 ♻️ 恢复，记忆与白名单条目都会消失。\n` +
+        `继续？`
+      )) return;
+      // Second confirm: require typing the name to proceed (typo guard)
+      const typed = prompt(`再次确认：请输入完整项目名 "${name}" 以执行彻底删除：`);
+      if (typed !== name) {
+        if (typed !== null) alert("名称不匹配，已取消。");
+        return;
+      }
+      const r = await api(
+        "/projects/" + encodeURIComponent(name) + "/hard",
+        { method: "DELETE" }
+      );
+      if (r) {
+        alert(`💣 已彻底删除 "${name}"，移除记忆 ${r.memories_removed} 条`);
+        showProjects();
+        if (document.getElementById("filter-project").value.trim() === name) {
+          document.getElementById("filter-project").value = "";
+          state.offset = 0;
+          run();
+        }
+      }
+    }
+
+    async function clearProjectMemories(name, cnt) {
+      const cntText = cnt == null ? "未知数量" : cnt + " 条";
+      if (!confirm(
+        `⚠️ 不可恢复操作\n\n` +
+        `将清空项目 "${name}" 下的全部记忆（${cntText}）。\n` +
+        `qdrant 中所有 agent_id="${name}" 的点都会被删除。\n\n` +
+        `确认继续？`
+      )) return;
+      const r = await api(
+        "/projects/" + encodeURIComponent(name) + "/memories",
+        { method: "DELETE" }
+      );
+      if (r) {
+        alert(`已清空 "${name}" 下 ${r.removed} 条记忆`);
+        showProjects();
+        // 如果当前 filter 在浏览这个 project，也刷新主列表
+        if (document.getElementById("filter-project").value.trim() === name) {
+          state.offset = 0;
+          run();
+        }
+      }
+    }
+
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape") hideProjects();
+    });
+
+    // boot
+    run();
+    refreshProjectSuggestions();
+  </script>
+</body>
+</html>

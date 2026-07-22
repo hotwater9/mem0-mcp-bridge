@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy to your project root as .mcp.json, replace <project-name> with your repo name",
+  "mcpServers": {
+    "memory": {
+      "type": "sse",
+      "url": "http://your-server:8765/mcp/<project-name>/sse/${USER}",
+      "headers": {
+        "Authorization": "Bearer ${MEM0_TOKEN}"
+      }
+    }
+  }
+}
