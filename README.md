@@ -18,7 +18,6 @@ This bridge wraps mem0 SDK directly with a thin MCP layer (~650 lines), giving y
 - **7 MCP tools** — the 4 standard ones (add/search/list/delete) plus get/update/history for fine-grained editing
 - **Built-in web UI** for browsing memories and viewing stats
 - **Metrics persistence** in SQLite (survives container restarts)
-- **Prompt caching** awareness via litellm
 
 ## Architecture
 
@@ -36,8 +35,8 @@ mem0 SDK v2.x (official library)
         │
    ┌────┴────────┐
    ▼             ▼
-LLM gateway   Qdrant (vector DB)
-(via litellm)
+LLM gateway        Qdrant (vector DB)
+(any OpenAI-compatible)
 ```
 
 ## Quick Start
